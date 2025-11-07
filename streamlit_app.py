@@ -60,20 +60,21 @@ def extract_text_from_url(url):
 # ====== TẠO CÂU HỎI BẰNG AI (OpenAI API) ======
 def generate_quiz_questions(content, num_questions=20):
     prompt = f"""
-Hãy tạo {num_questions} câu hỏi trắc nghiệm LỊCH SỬ dựa trên nội dung sau.
-Mỗi câu hỏi có 4 lựa chọn (A, B, C, D) và chỉ có 1 đáp án đúng.
-Định dạng JSON:
+Hãy tạo {num_questions} câu hỏi trắc nghiệm môn LỊCH SỬ dựa trên nội dung sau. 
+Mỗi câu hỏi có 4 lựa chọn (A, B, C, D), chỉ có 1 đáp án đúng duy nhất. 
+Trả về **chỉ JSON**, theo định dạng:
+
 {{
   "questions": [
     {{
-      "question": "Câu hỏi",
+      "question": "Câu hỏi?",
       "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
       "correct_answer": "A"
     }}
   ]
 }}
 
-Nội dung:
+Nội dung bài giảng: 
 {content[:3000]}
 """
     try:
@@ -81,15 +82,26 @@ Nội dung:
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=1500,
+            max_tokens=2000,
         )
-        content = response.choices[0].message.content
-        start_idx = content.find('{')
-        end_idx = content.rfind('}') + 1
-        json_str = content[start_idx:end_idx]
-        return json.loads(json_str)
+        text = response.choices[0].message.content
+        print("Raw response from GPT:", text)
+
+        import re
+        pattern = r'(\{.*\})'
+        match = re.search(pattern, text, re.DOTALL)
+        if not match:
+            raise ValueError("Không tìm thấy JSON trong response")
+
+        json_str = match.group(1)
+        quiz_data = json.loads(json_str)
+        # Kiểm tra có câu hỏi không
+        if "questions" not in quiz_data or len(quiz_data["questions"]) == 0:
+            raise ValueError("JSON không có câu hỏi")
+
+        return quiz_data
     except Exception as e:
-        print(f"Lỗi khi tạo câu hỏi: {e}")
+        print("Lỗi khi tạo câu hỏi:", e)
         return generate_sample_questions()
 
 
