@@ -16,7 +16,7 @@ import re
 
 # ====== CẤU HÌNH API ======
 # Sử dụng secrets của Streamlit thay vì hardcode
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "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")  # ⚠️ KHÔNG public khóa thật ra ngoài
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY or OPENAI_API_KEY == "your-api-key-here":
     st.error("⚠️ Vui lòng cấu hình OpenAI API Key trong secrets.toml")
@@ -237,13 +237,13 @@ with tab1:
     
     content = ""
     
-    if source_type == " Tải lên file PDF":
+    if source_type == "📄 Tải lên file PDF":
         pdf_file = st.file_uploader("Tải lên file PDF", type=["pdf"])
         if pdf_file:
             with st.spinner("Đang trích xuất nội dung từ PDF..."):
                 content = extract_text_from_pdf(pdf_file)
     
-    elif source_type == " Tải lên file Word":
+    elif source_type == "📝 Tải lên file Word":
         docx_file = st.file_uploader("Tải lên file Word", type=["docx"])
         if docx_file:
             with st.spinner("Đang trích xuất nội dung từ Word..."):
@@ -263,7 +263,7 @@ with tab1:
         # Hiển thị thông tin về nội dung
         st.info(f"Độ dài nội dung: {len(content)} ký tự")
     
-    if st.button(" Tạo Câu Hỏi Trắc nghiệm", type="primary"):
+    if st.button("🎯 Tạo Câu Hỏi Trắc nghiệm", type="primary"):
         if not content:
             st.warning("⚠️ Vui lòng cung cấp nội dung bài giảng trước!")
         elif len(content.strip()) < 50:
@@ -288,14 +288,14 @@ with tab1:
     # PHẦN XUẤT FILE & CHIA SẺ
     if "quiz_data" in st.session_state:
         st.markdown("---")
-        st.subheader(" Xuất file & Chia sẻ")
+        st.subheader("📤 Xuất file & Chia sẻ")
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
             json_data = json.dumps(st.session_state.quiz_data, ensure_ascii=False, indent=2)
             st.download_button(
-                label=" Tải file JSON",
+                label="💾 Tải file JSON",
                 data=json_data,
                 file_name="cau_hoi_trac_nghiem.json",
                 mime="application/json"
@@ -324,30 +324,30 @@ with tab2:
     st.header("Tham Gia Thi Trắc nghiệm")
 
     quiz_source = st.radio("Nguồn câu hỏi:",
-                          [" Sử dụng câu hỏi đã tạo",
-                           " Tải lên file câu hỏi JSON",
-                           " Tải lên bài giảng PDF/DOCX",
-                           " Nhập URL bài giảng"])
+                          ["📁 Sử dụng câu hỏi đã tạo",
+                           "📤 Tải lên file câu hỏi JSON",
+                           "📄 Tải lên bài giảng PDF/DOCX",
+                           "🌐 Nhập URL bài giảng"])
 
     quiz_data = None
 
-    if quiz_source == " Sử dụng câu hỏi đã tạo":
+    if quiz_source == "📁 Sử dụng câu hỏi đã tạo":
         if "quiz_data" in st.session_state:
             quiz_data = st.session_state.quiz_data
-            st.success(" Đã tải câu hỏi từ bộ nhớ!")
+            st.success("✅ Đã tải câu hỏi từ bộ nhớ!")
         else:
-            st.warning(" Chưa có câu hỏi nào được tạo. Vui lòng tạo câu hỏi ở tab bên trái.")
+            st.warning("⚠️ Chưa có câu hỏi nào được tạo. Vui lòng tạo câu hỏi ở tab bên trái.")
 
-    elif quiz_source == " Tải lên file câu hỏi JSON":
+    elif quiz_source == "📤 Tải lên file câu hỏi JSON":
         uploaded_file = st.file_uploader("Tải lên file câu hỏi JSON", type=["json"])
         if uploaded_file:
             try:
                 quiz_data = json.load(uploaded_file)
-                st.success(" Đã tải file câu hỏi thành công!")
+                st.success("✅ Đã tải file câu hỏi thành công!")
             except Exception as e:
-                st.error(f" Lỗi khi đọc file: {e}")
+                st.error(f"❌ Lỗi khi đọc file: {e}")
 
-    elif quiz_source == " Tải lên bài giảng PDF/DOCX":
+    elif quiz_source == "📄 Tải lên bài giảng PDF/DOCX":
         file = st.file_uploader("Tải lên file bài giảng PDF hoặc DOCX", type=["pdf", "docx"])
         if file:
             with st.spinner("Đang trích xuất nội dung bài giảng và tạo câu hỏi..."):
@@ -360,9 +360,9 @@ with tab2:
                     content = ""
                 if content:
                     quiz_data = generate_quiz_questions(content, 20)
-                    st.success(" Đã tạo câu hỏi từ bài giảng!")
+                    st.success("✅ Đã tạo câu hỏi từ bài giảng!")
                 else:
-                    st.error(" Không thể trích xuất nội dung bài giảng.")
+                    st.error("❌ Không thể trích xuất nội dung bài giảng.")
 
     else:  # Nhập URL
         url = st.text_input("Nhập URL bài giảng:", key="url_input")
@@ -371,14 +371,14 @@ with tab2:
                 content = extract_text_from_url(url)
                 if content:
                     quiz_data = generate_quiz_questions(content, 20)
-                    st.success(" Đã tạo câu hỏi từ URL!")
+                    st.success("✅ Đã tạo câu hỏi từ URL!")
                 else:
-                    st.error(" Không thể lấy nội dung từ URL.")
+                    st.error("❌ Không thể lấy nội dung từ URL.")
 
     # Hiển thị bài thi nếu có dữ liệu
     if quiz_data and "questions" in quiz_data:
         st.markdown("---")
-        st.subheader(" Bài Thi Trắc nghiệm")
+        st.subheader("📝 Bài Thi Trắc nghiệm")
 
         # Khởi tạo session state
         if "user_answers" not in st.session_state:
@@ -406,13 +406,13 @@ with tab2:
 
         col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button(" Nộp Bài", type="primary", key="submit_quiz"):
+            if st.button("📤 Nộp Bài", type="primary", key="submit_quiz"):
                 st.session_state.submitted = True
                 st.rerun()
 
         # Nút làm lại bài
         with col2:
-            if st.button(" Làm lại bài", key="reset_quiz"):
+            if st.button("🔄 Làm lại bài", key="reset_quiz"):
                 st.session_state.user_answers = [None] * len(quiz_data["questions"])
                 st.session_state.submitted = False
                 st.rerun()
@@ -420,7 +420,7 @@ with tab2:
         # Hiển thị kết quả sau khi nộp bài
         if st.session_state.submitted:
             st.markdown("---")
-            st.subheader(" Kết Quả Bài Thi")
+            st.subheader("📊 Kết Quả Bài Thi")
 
             correct_count = 0
             for i, question in enumerate(quiz_data["questions"]):
@@ -436,11 +436,11 @@ with tab2:
 
                     # Hiển thị kết quả từng câu
                     if is_correct:
-                        st.success(f" Câu {i+1}: ĐÚNG - Đáp án của bạn: {user_answer_letter}")
+                        st.success(f"✅ Câu {i+1}: ĐÚNG - Đáp án của bạn: {user_answer_letter}")
                     else:
-                        st.error(f" Câu {i+1}: SAI - Đáp án của bạn: {user_answer_letter}, Đáp án đúng: {correct_answer}")
+                        st.error(f"❌ Câu {i+1}: SAI - Đáp án của bạn: {user_answer_letter}, Đáp án đúng: {correct_answer}")
                 else:
-                    st.warning(f" Câu {i+1}: Chưa trả lời - Đáp án đúng: {correct_answer}")
+                    st.warning(f"⚠️ Câu {i+1}: Chưa trả lời - Đáp án đúng: {correct_answer}")
 
             total_questions = len(quiz_data["questions"])
             score_percent = (correct_count / total_questions) * 100 if total_questions > 0 else 0
@@ -450,14 +450,15 @@ with tab2:
 
             # Đánh giá kết quả
             if score_percent >= 90:
-                st.success(" Xuất sắc! Bạn có kiến thức lịch sử rất tốt!")
+                st.success("🎉 Xuất sắc! Bạn có kiến thức lịch sử rất tốt!")
             elif score_percent >= 70:
-                st.info(" Khá tốt! Tiếp tục phát huy nhé!")
+                st.info("👍 Khá tốt! Tiếp tục phát huy nhé!")
             elif score_percent >= 50:
-                st.warning(" Cố gắng hơn nữa!")
+                st.warning("💪 Cố gắng hơn nữa!")
             else:
-                st.error(" Cần ôn tập lại kiến thức!")
+                st.error("📚 Cần ôn tập lại kiến thức!")
 
 # ====== FOOTER ======
 st.markdown("---")
 st.markdown("Ứng dụng được phát triển bởi [Le Thi Ngoc Duyen] - Sử dụng AI để tạo câu hỏi trắc nghiệm")
+📋 Hướ
