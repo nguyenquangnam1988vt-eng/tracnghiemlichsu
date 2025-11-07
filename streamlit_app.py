@@ -6,6 +6,7 @@ import json
 import tempfile
 import os
 import smtplib
+import qrcode
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -14,15 +15,13 @@ import base64
 from io import BytesIO
 
 # ====== CẤU HÌNH API ======
-# Thay thế bằng API key thực tế của bạn
-OPENAI_API_KEY = "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"    # tim apk key trong 
-GROQ_API_KEY = "your-groq-api-key-here"  # Hoặc dùng Groq API cho tốc độ nhanh hơn
+OPENAI_API_KEY = "sk-proj-..."     # ⚠️ KHÔNG public khóa thật ra ngoài
+GROQ_API_KEY = "your-groq-api-key-here"
 
-# ====== HÀM XỬ LÝ TÀI LIỆU ======
+# ====== HÀM XỬ LÝ FILE ======
 def extract_text_from_pdf(pdf_file):
-    """Trích xuất văn bản từ file PDF"""
     try:
-        pdf_reader = pypdf.PdfReader(pdf_file)  # Đổi PyPDF2 thành pypdf
+        pdf_reader = pypdf.PdfReader(pdf_file)
         text = ""
         for page in pdf_reader.pages:
             text += page.extract_text()
@@ -32,144 +31,108 @@ def extract_text_from_pdf(pdf_file):
         return ""
 
 def extract_text_from_docx(docx_file):
-    """Trích xuất văn bản từ file Word"""
     try:
         doc = docx.Document(docx_file)
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
+        text = "\n".join(p.text for p in doc.paragraphs)
         return text
     except Exception as e:
         st.error(f"Lỗi khi đọc Word: {e}")
         return ""
 
 def extract_text_from_url(url):
-    """Trích xuất văn bản từ URL (sử dụng API đơn giản)"""
     try:
         response = requests.get(url)
-        # Đây là phần đơn giản, trong thực tế cần parser phức tạp hơn
-        return response.text[:5000]  # Giới hạn text
+        return response.text[:5000]
     except Exception as e:
         st.error(f"Lỗi khi lấy nội dung từ URL: {e}")
         return ""
 
-# ====== HÀM TẠO CÂU HỎI BẰNG AI ======
+# ====== TẠO CÂU HỎI BẰNG AI ======
 def generate_quiz_questions(content, num_questions=20):
-    """Sử dụng AI để tạo câu hỏi trắc nghiệm từ nội dung"""
-    
     prompt = f"""
     Hãy tạo {num_questions} câu hỏi trắc nghiệm LỊCH SỬ dựa trên nội dung sau.
-    Mỗi câu hỏi phải có 4 lựa chọn (A, B, C, D) và chỉ có 1 đáp án đúng.
-    Định dạng JSON như sau:
+    Mỗi câu hỏi có 4 lựa chọn (A, B, C, D) và chỉ có 1 đáp án đúng.
+    Định dạng JSON:
     {{
-        "questions": [
-            {{
-                "question": "Nội dung câu hỏi",
-                "options": ["A. Lựa chọn A", "B. Lựa chọn B", "C. Lựa chọn C", "D. Lựa chọn D"],
-                "correct_answer": "A"
-            }}
-        ]
+      "questions": [
+        {{
+          "question": "Câu hỏi",
+          "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+          "correct_answer": "A"
+        }}
+      ]
     }}
-    
-    Nội dung bài giảng:
-    {content[:3000]}  # Giới hạn nội dung để tiết kiệm token
+
+    Nội dung:
+    {content[:3000]}
     """
-    
     try:
-        # Sử dụng Groq API (miễn phí và nhanh) - thay thế bằng OpenAI nếu muốn
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json"
         }
-        
         data = {
-            "model": "llama-3.1-8b-instant",  # Hoặc "mixtral-8x7b-32768"
+            "model": "llama-3.1-8b-instant",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
             "max_tokens": 4000
         }
-        
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30
-        )
-        
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                                 headers=headers, json=data, timeout=30)
         if response.status_code == 200:
             result = response.json()
             content = result["choices"][0]["message"]["content"]
-            
-            # Trích xuất JSON từ response
             start_idx = content.find('{')
             end_idx = content.rfind('}') + 1
             json_str = content[start_idx:end_idx]
-            
             return json.loads(json_str)
         else:
             st.error(f"Lỗi API: {response.status_code}")
-            return generate_sample_questions()  # Trả về câu hỏi mẫu nếu lỗi
-            
+            return generate_sample_questions()
     except Exception as e:
         st.error(f"Lỗi khi tạo câu hỏi: {e}")
         return generate_sample_questions()
 
 def generate_sample_questions():
-    """Tạo câu hỏi mẫu khi API không hoạt động"""
     return {
         "questions": [
-            {
-                "question": "Ai là vị vua đầu tiên của nhà Nguyễn?",
-                "options": ["A. Gia Long", "B. Minh Mạng", "C. Thiệu Trị", "D. Tự Đức"],
-                "correct_answer": "A"
-            },
-            {
-                "question": "Chiến thắng Điện Biên Phủ vào năm nào?",
-                "options": ["A. 1953", "B. 1954", "C. 1955", "D. 1956"],
-                "correct_answer": "B"
-            }
+            {"question": "Ai là vị vua đầu tiên của nhà Nguyễn?",
+             "options": ["A. Gia Long", "B. Minh Mạng", "C. Thiệu Trị", "D. Tự Đức"],
+             "correct_answer": "A"},
+            {"question": "Chiến thắng Điện Biên Phủ vào năm nào?",
+             "options": ["A. 1953", "B. 1954", "C. 1955", "D. 1956"],
+             "correct_answer": "B"}
         ]
     }
 
-# ====== HÀM GỬI EMAIL ======
-def send_email(receiver_email, subject, body, attachment_data=None, filename="quiz_questions.json"):
-    """Gửi email với file đính kèm"""
+# ====== GỬI EMAIL ======
+def send_email(receiver_email, subject, body, attachment_data=None, filename="quiz.json"):
     try:
-        # Cấu hình email (thay bằng thông tin thực tế)
         sender_email = "your-email@gmail.com"
-        sender_password = "your-app-password"  # Sử dụng App Password cho Gmail
-        
-        # Tạo message
+        sender_password = "your-app-password"
+
         message = MIMEMultipart()
         message["From"] = sender_email
         message["To"] = receiver_email
         message["Subject"] = subject
-        
-        # Thêm nội dung email
-        message.attach(MimeText(body, "plain"))
-        
-        # Thêm file đính kèm
+        message.attach(MIMEText(body, "plain"))  # ✅ sửa lại đúng class
+
         if attachment_data:
             part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment_data)
             encoders.encode_base64(part)
-            part.add_header(
-                "Content-Disposition",
-                f"attachment; filename= {filename}",
-            )
+            part.add_header("Content-Disposition", f"attachment; filename={filename}")
             message.attach(part)
-        
-        # Gửi email
+
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(sender_email, sender_password)
             server.send_message(message)
-        
         return True
     except Exception as e:
         st.error(f"Lỗi khi gửi email: {e}")
         return False
-
+    
 # ====== GIAO DIỆN ỨNG DỤNG ======
 st.set_page_config(page_title="Hệ thống Trắc nghiệm Lịch sử", layout="wide")
 
