@@ -62,7 +62,7 @@ def generate_mcqs_from_openai(text, num_questions=10):
     """
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "Bạn là trợ lý tạo câu hỏi trắc nghiệm."},
             {"role": "user", "content": prompt},
