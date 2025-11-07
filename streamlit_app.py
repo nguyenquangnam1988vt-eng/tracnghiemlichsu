@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 
 # ====== CẤU HÌNH API ======
-OPENAI_API_KEY = "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"  # ⚠️ KHÔNG public khóa thật ra ngoài
+OPENAI_API_KEY = "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"  # ⚠️ KHÔNG public khóa thật ra ngoài
 # Tạo client OpenAI
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
@@ -84,13 +84,12 @@ Nội dung:
             max_tokens=1500,
         )
         content = response.choices[0].message.content
-        # Cố gắng trích xuất JSON trong response
         start_idx = content.find('{')
         end_idx = content.rfind('}') + 1
         json_str = content[start_idx:end_idx]
         return json.loads(json_str)
     except Exception as e:
-        st.error(f"Lỗi khi tạo câu hỏi: {e}")
+        print(f"Lỗi khi tạo câu hỏi: {e}")
         return generate_sample_questions()
 
 
