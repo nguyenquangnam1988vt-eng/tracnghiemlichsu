@@ -20,8 +20,7 @@ from reportlab.pdfgen import canvas
 st.set_page_config(page_title="AI Quiz Generator", layout="wide")
 
 # Lấy API key từ secrets (Streamlit Cloud)
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # SMTP config (bạn đặt trong secrets)
 SMTP_EMAIL = st.secrets.get("SMTP_EMAIL", "")
@@ -46,29 +45,31 @@ def extract_text(file):
     return text.strip()
 
 
-def generate_mcqs_from_openai(text, num_questions=20):
-    """Tạo câu hỏi trắc nghiệm bằng OpenAI"""
-    if not OPENAI_API_KEY:
-        return generate_mcqs_offline(text, num_questions)
-
+def generate_mcqs_from_openai(text, num_questions=10):
     prompt = f"""
-    Tạo {num_questions} câu hỏi trắc nghiệm từ đoạn văn sau, kèm 4 đáp án (A–D) và đánh dấu đáp án đúng:
-    Văn bản:
-    {text[:3000]}  # Giới hạn cho vừa token
-    Định dạng trả về:
+    Hãy tạo {num_questions} câu hỏi trắc nghiệm từ nội dung sau.
+    Mỗi câu có 4 đáp án (A, B, C, D) và chỉ rõ đáp án đúng.
+    Trình bày rõ ràng theo định dạng:
+
     Câu X: ...
     A. ...
     B. ...
     C. ...
     D. ...
     Đáp án đúng: ...
+
+    Nội dung: {text[:3000]}
     """
 
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": "Bạn là trợ lý tạo câu hỏi trắc nghiệm."},
+            {"role": "user", "content": prompt},
+        ],
         temperature=0.7,
     )
+
     return response.choices[0].message.content
 
 
