@@ -1,0 +1,5 @@
+streamlit
+pypdf
+openai
+requests
+groq
