@@ -7,3 +7,4 @@ python-docx
 pillow
 qrcode[pil]
 beautifulsoup4
+reportlab
