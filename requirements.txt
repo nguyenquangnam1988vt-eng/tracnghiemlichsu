@@ -1,8 +1,9 @@
 streamlit
-pypdf
+pypdf2
 openai
 requests
 groq
 python-docx
 pillow
 qrcode[pil]
+beautifulsoup4
