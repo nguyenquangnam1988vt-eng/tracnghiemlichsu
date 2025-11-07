@@ -1,7 +1,6 @@
 import streamlit as st
 from openai import OpenAI
 import os
-import tempfile
 import PyPDF2
 import docx
 import smtplib
@@ -44,7 +43,6 @@ def extract_text(file):
         text = "\n".join([p.text for p in doc.paragraphs])
     return text.strip()
 
-
 def generate_mcqs_from_openai(text, num_questions=10):
     prompt = f"""
     Hãy tạo {num_questions} câu hỏi trắc nghiệm từ nội dung sau.
@@ -62,7 +60,7 @@ def generate_mcqs_from_openai(text, num_questions=10):
     """
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "Bạn là trợ lý tạo câu hỏi trắc nghiệm."},
             {"role": "user", "content": prompt},
@@ -71,17 +69,6 @@ def generate_mcqs_from_openai(text, num_questions=10):
     )
 
     return response.choices[0].message.content
-
-
-def generate_mcqs_offline(text, num_questions=10):
-    """Sinh câu hỏi ngẫu nhiên khi không có OpenAI"""
-    sentences = [s for s in text.split(".") if len(s.strip()) > 20]
-    questions = []
-    for i in range(min(num_questions, len(sentences))):
-        q = sentences[i][:80] + "..."
-        questions.append(f"Câu {i+1}: Nội dung sau nói về gì?\nA. Đúng\nB. Sai\nC. Có thể\nD. Không rõ\nĐáp án đúng: A")
-    return "\n\n".join(questions)
-
 
 def export_docx(mcq_text):
     """Xuất ra file Word"""
@@ -93,7 +80,6 @@ def export_docx(mcq_text):
     doc.save(buf)
     buf.seek(0)
     return buf
-
 
 def export_pdf(mcq_text):
     """Xuất ra file PDF"""
@@ -111,7 +97,6 @@ def export_pdf(mcq_text):
     buf.seek(0)
     return buf
 
-
 def send_email(recipient, subject, body, attachment=None, filename="quiz.docx"):
     """Gửi mail kèm file"""
     msg = MIMEMultipart()
@@ -122,7 +107,7 @@ def send_email(recipient, subject, body, attachment=None, filename="quiz.docx"):
     msg.attach(MIMEText(body, "plain"))
     if attachment:
         part = MIMEBase("application", "octet-stream")
-        part.set_payload(attachment.read())
+        part.set_payload(attachment.getvalue())
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", f"attachment; filename={filename}")
         msg.attach(part)
@@ -131,7 +116,6 @@ def send_email(recipient, subject, body, attachment=None, filename="quiz.docx"):
         server.starttls()
         server.login(SMTP_EMAIL, SMTP_PASSWORD)
         server.send_message(msg)
-
 
 # ======================
 # 🎯 GIAO DIỆN STREAMLIT
@@ -149,23 +133,30 @@ if mode == "Tạo và xuất file câu hỏi":
         if uploaded_file:
             text = extract_text(uploaded_file)
         elif link_input:
+            # Bạn có thể bổ sung xử lý tải và trích xuất text từ link ở đây
             text = link_input
         else:
             st.warning("Vui lòng tải lên file hoặc nhập link.")
             st.stop()
 
-        mcqs = generate_mcqs_from_openai(text)
+        with st.spinner("Đang tạo câu hỏi, vui lòng chờ..."):
+            mcqs = generate_mcqs_from_openai(text)
+
         st.text_area("📚 Kết quả câu hỏi:", mcqs, height=400)
 
         # Xuất file Word & PDF
         docx_file = export_docx(mcqs)
         pdf_file = export_pdf(mcqs)
-        st.download_button("📄 Tải file Word", docx_file, "quiz.docx")
-        st.download_button("📘 Tải file PDF", pdf_file, "quiz.pdf")
 
-        if email_input and SMTP_EMAIL:
-            send_email(email_input, "Bộ câu hỏi trắc nghiệm tự động", "Đính kèm là bộ câu hỏi bạn yêu cầu.", docx_file)
-            st.success(f"✅ Đã gửi file tới {email_input}")
+        st.download_button("📄 Tải file Word", docx_file, file_name="quiz.docx")
+        st.download_button("📘 Tải file PDF", pdf_file, file_name="quiz.pdf")
+
+        if email_input and SMTP_EMAIL and SMTP_PASSWORD:
+            try:
+                send_email(email_input, "Bộ câu hỏi trắc nghiệm tự động", "Đính kèm là bộ câu hỏi bạn yêu cầu.", docx_file)
+                st.success(f"✅ Đã gửi file tới {email_input}")
+            except Exception as e:
+                st.error(f"❌ Gửi mail thất bại: {e}")
 
 elif mode == "Làm bài trực tuyến":
     uploaded_file = st.file_uploader("📤 Tải lên file PDF hoặc DOCX", type=["pdf", "docx"])
@@ -174,14 +165,15 @@ elif mode == "Làm bài trực tuyến":
             st.warning("Vui lòng tải lên tài liệu.")
             st.stop()
         text = extract_text(uploaded_file)
-        mcqs = generate_mcqs_from_openai(text)
+        with st.spinner("Đang tạo bài trắc nghiệm, vui lòng chờ..."):
+            mcqs = generate_mcqs_from_openai(text)
         questions = [q for q in mcqs.split("\n\n") if "Câu" in q]
 
         score = 0
-        for q in questions:
+        for i, q in enumerate(questions):
             st.write(q.split("Đáp án đúng")[0])
-            answer = st.radio("Chọn đáp án:", ["A", "B", "C", "D"], key=q)
-            correct = q.split("Đáp án đúng:")[-1].strip()[-1]
+            answer = st.radio(f"Chọn đáp án câu {i+1}:", ["A", "B", "C", "D"], key=i)
+            correct = q.split("Đáp án đúng:")[-1].strip()[0]
             if answer == correct:
                 score += 1
 
