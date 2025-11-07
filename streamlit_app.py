@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-import PyPDF2
+import pypdf
 import docx
 import json
 import tempfile
@@ -22,7 +22,7 @@ GROQ_API_KEY = "your-groq-api-key-here"  # Hoặc dùng Groq API cho tốc độ
 def extract_text_from_pdf(pdf_file):
     """Trích xuất văn bản từ file PDF"""
     try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        pdf_reader = pypdf.PdfReader(pdf_file)  # Đổi PyPDF2 thành pypdf
         text = ""
         for page in pdf_reader.pages:
             text += page.extract_text()
