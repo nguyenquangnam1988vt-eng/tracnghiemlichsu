@@ -16,8 +16,8 @@ from bs4 import BeautifulSoup
 
 # ====== CẤU HÌNH API ======
 OPENAI_API_KEY = "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"  # ⚠️ KHÔNG public khóa thật ra ngoài
-openai.api_key = OPENAI_API_KEY  # Gán trực tiếp API key tại đây
-
+# Tạo client OpenAI
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # ====== HÀM XỬ LÝ FILE ======
 def extract_text_from_pdf(pdf_file):
@@ -77,13 +77,13 @@ Nội dung:
 {content[:3000]}
 """
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=1500,
         )
-        content = response['choices'][0]['message']['content']
+        content = response.choices[0].message.content
         # Cố gắng trích xuất JSON trong response
         start_idx = content.find('{')
         end_idx = content.rfind('}') + 1
@@ -92,6 +92,7 @@ Nội dung:
     except Exception as e:
         st.error(f"Lỗi khi tạo câu hỏi: {e}")
         return generate_sample_questions()
+
 
 
 def generate_sample_questions():
