@@ -11,10 +11,13 @@ from email.mime.base import MIMEBase
 from email import encoders
 from io import BytesIO
 import openai
-import os
+from bs4 import BeautifulSoup
+
 
 # ====== CẤU HÌNH API ======
-OPENAI_API_KEY = "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"     # ⚠️ KHÔNG public khóa thật ra ngoài
+OPENAI_API_KEY = "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"  # ⚠️ KHÔNG public khóa thật ra ngoài
+openai.api_key = OPENAI_API_KEY  # Gán trực tiếp API key tại đây
+
 
 # ====== HÀM XỬ LÝ FILE ======
 def extract_text_from_pdf(pdf_file):
@@ -30,6 +33,7 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Lỗi khi đọc PDF: {e}")
         return ""
 
+
 def extract_text_from_docx(docx_file):
     try:
         doc = docx.Document(docx_file)
@@ -39,37 +43,42 @@ def extract_text_from_docx(docx_file):
         st.error(f"Lỗi khi đọc Word: {e}")
         return ""
 
+
 def extract_text_from_url(url):
     try:
         response = requests.get(url, timeout=10)
-        return response.text[:5000]
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # Lấy text sạch, ngắt dòng bằng newline
+        text = soup.get_text(separator='\n')
+        return text[:5000]  # Giới hạn lấy 5000 ký tự
     except Exception as e:
         st.error(f"Lỗi khi lấy nội dung từ URL: {e}")
         return ""
 
+
 # ====== TẠO CÂU HỎI BẰNG AI (OpenAI API) ======
 def generate_quiz_questions(content, num_questions=20):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
     prompt = f"""
-    Hãy tạo {num_questions} câu hỏi trắc nghiệm LỊCH SỬ dựa trên nội dung sau.
-    Mỗi câu hỏi có 4 lựa chọn (A, B, C, D) và chỉ có 1 đáp án đúng.
-    Định dạng JSON:
+Hãy tạo {num_questions} câu hỏi trắc nghiệm LỊCH SỬ dựa trên nội dung sau.
+Mỗi câu hỏi có 4 lựa chọn (A, B, C, D) và chỉ có 1 đáp án đúng.
+Định dạng JSON:
+{{
+  "questions": [
     {{
-      "questions": [
-        {{
-          "question": "Câu hỏi",
-          "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-          "correct_answer": "A"
-        }}
-      ]
+      "question": "Câu hỏi",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "correct_answer": "A"
     }}
+  ]
+}}
 
-    Nội dung:
-    {content[:3000]}
-    """
+Nội dung:
+{content[:3000]}
+"""
     try:
-        response = openai.chat.completions(
-            model="gpt-3.5-turbo",  # Hoặc "gpt-3.5-turbo" nếu chưa có GPT-4
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=1500,
@@ -84,6 +93,7 @@ def generate_quiz_questions(content, num_questions=20):
         st.error(f"Lỗi khi tạo câu hỏi: {e}")
         return generate_sample_questions()
 
+
 def generate_sample_questions():
     return {
         "questions": [
@@ -95,6 +105,7 @@ def generate_sample_questions():
              "correct_answer": "B"}
         ]
     }
+
 
 # ====== GỬI EMAIL ======
 def send_email(receiver_email, subject, body, attachment_data=None, filename="quiz.json"):
@@ -123,6 +134,7 @@ def send_email(receiver_email, subject, body, attachment_data=None, filename="qu
     except Exception as e:
         st.error(f"Lỗi khi gửi email: {e}")
         return False
+
 
 # ====== GIAO DIỆN ỨNG DỤNG ======
 st.set_page_config(page_title="Hệ thống Trắc nghiệm Lịch sử", layout="wide")
@@ -213,6 +225,7 @@ with tab1:
             buf = BytesIO()
             qr.save(buf, format="PNG")
             st.image(buf.getvalue(), caption="Quét QR code để chia sẻ", width=200)
+
 
 # ====== TAB 2: THAM GIA THI (BỔ SUNG TỰ ĐỘNG TẠO CÂU HỎI TỪ BÀI GIẢNG) ======
 with tab2:
