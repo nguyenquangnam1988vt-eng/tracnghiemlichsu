@@ -1,464 +1,188 @@
 import streamlit as st
-import requests
-import pypdf
+import openai
+import os
+import tempfile
+import PyPDF2
 import docx
-import json
 import smtplib
-import qrcode
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from io import BytesIO
-import openai
-from bs4 import BeautifulSoup
-import re
+from docx import Document
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
-# ====== CẤU HÌNH API ======
-# Sử dụng secrets của Streamlit thay vì hardcode
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
+# ======================
+# ⚙️ CONFIG
+# ======================
+st.set_page_config(page_title="AI Quiz Generator", layout="wide")
 
-if not OPENAI_API_KEY or OPENAI_API_KEY == "your-api-key-here":
-    st.error("⚠️ Vui lòng cấu hình OpenAI API Key trong secrets.toml")
-    st.stop()
+# Lấy API key từ secrets (Streamlit Cloud)
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
+openai.api_key = OPENAI_API_KEY
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+# SMTP config (bạn đặt trong secrets)
+SMTP_EMAIL = st.secrets.get("SMTP_EMAIL", "")
+SMTP_PASSWORD = st.secrets.get("SMTP_PASSWORD", "")
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
 
-# ====== HÀM XỬ LÝ FILE ======
-def extract_text_from_pdf(pdf_file):
-    try:
-        pdf_reader = pypdf.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        return text
-    except Exception as e:
-        st.error(f"Lỗi khi đọc PDF: {e}")
-        return ""
+# ======================
+# 📘 HÀM HỖ TRỢ
+# ======================
 
-def extract_text_from_docx(docx_file):
-    try:
-        doc = docx.Document(docx_file)
-        text = "\n".join(p.text for p in doc.paragraphs)
-        return text
-    except Exception as e:
-        st.error(f"Lỗi khi đọc Word: {e}")
-        return ""
+def extract_text(file):
+    """Đọc nội dung từ file PDF hoặc DOCX"""
+    text = ""
+    if file.name.endswith(".pdf"):
+        reader = PyPDF2.PdfReader(file)
+        for page in reader.pages:
+            text += page.extract_text() or ""
+    elif file.name.endswith(".docx"):
+        doc = docx.Document(file)
+        text = "\n".join([p.text for p in doc.paragraphs])
+    return text.strip()
 
-def extract_text_from_url(url):
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        text = soup.get_text(separator='\n')
-        return text[:5000]
-    except Exception as e:
-        st.error(f"Lỗi khi lấy nội dung từ URL: {e}")
-        return ""
 
-# ====== TẠO CÂU HỎI BẰNG AI - ĐÃ SỬA ======
-def generate_quiz_questions(content, num_questions=20):
-    # Làm sạch nội dung
-    clean_content = re.sub(r'\s+', ' ', content).strip()
-    
-    if len(clean_content) < 100:
-        st.error("Nội dung quá ngắn để tạo câu hỏi. Vui lòng cung cấp nội dung dài hơn.")
-        return generate_sample_questions()
-    
+def generate_mcqs_from_openai(text, num_questions=20):
+    """Tạo câu hỏi trắc nghiệm bằng OpenAI"""
+    if not OPENAI_API_KEY:
+        return generate_mcqs_offline(text, num_questions)
+
     prompt = f"""
-BẮT BUỘC: Bạn PHẢI trả về ĐÚNG định dạng JSON dưới đây, KHÔNG thêm bất kỳ text nào khác.
+    Tạo {num_questions} câu hỏi trắc nghiệm từ đoạn văn sau, kèm 4 đáp án (A–D) và đánh dấu đáp án đúng:
+    Văn bản:
+    {text[:3000]}  # Giới hạn cho vừa token
+    Định dạng trả về:
+    Câu X: ...
+    A. ...
+    B. ...
+    C. ...
+    D. ...
+    Đáp án đúng: ...
+    """
 
-Hãy tạo {num_questions} câu hỏi trắc nghiệm môn LỊCH SỬ VIỆT NAM dựa trên nội dung được cung cấp.
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return response.choices[0].message.content
 
-YÊU CẦU:
-- Mỗi câu hỏi phải dựa TRỰC TIẾP vào thông tin trong nội dung
-- 4 lựa chọn A, B, C, D (chỉ 1 đáp án đúng duy nhất)
-- Câu hỏi phải kiểm tra hiểu biết về sự kiện, nhân vật, thời gian lịch sử
-- Đáp án phải CHÍNH XÁC theo nội dung được cung cấp
 
-ĐỊNH DẠNG JSON BẮT BUỘC:
-{{
-  "questions": [
-    {{
-      "question": "Câu hỏi?",
-      "options": ["A. Lựa chọn A", "B. Lựa chọn B", "C. Lựa chọn C", "D. Lựa chọn D"],
-      "correct_answer": "A"
-    }}
-  ]
-}}
+def generate_mcqs_offline(text, num_questions=10):
+    """Sinh câu hỏi ngẫu nhiên khi không có OpenAI"""
+    sentences = [s for s in text.split(".") if len(s.strip()) > 20]
+    questions = []
+    for i in range(min(num_questions, len(sentences))):
+        q = sentences[i][:80] + "..."
+        questions.append(f"Câu {i+1}: Nội dung sau nói về gì?\nA. Đúng\nB. Sai\nC. Có thể\nD. Không rõ\nĐáp án đúng: A")
+    return "\n\n".join(questions)
 
-NỘI DUNG BÀI GIẢNG:
-{clean_content[:4000]}
-"""
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Bạn là chuyên gia giáo dục Lịch sử Việt Nam. Luôn trả về đúng định dạng JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=3000,
-        )
-        
-        text = response.choices[0].message.content.strip()
-        
-        # Tìm JSON trong response
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group()
-            quiz_data = json.loads(json_str)
-            
-            # Kiểm tra cấu trúc
-            if "questions" in quiz_data and isinstance(quiz_data["questions"], list):
-                if len(quiz_data["questions"]) > 0:
-                    st.success(f"✅ Đã tạo thành công {len(quiz_data['questions'])} câu hỏi!")
-                    return quiz_data
-        
-        # Nếu không được, thử phương pháp dự phòng
-        st.warning("⚠️ Thử phương pháp dự phòng...")
-        return generate_quiz_fallback(clean_content, num_questions)
-        
-    except Exception as e:
-        st.error(f"❌ Lỗi khi tạo câu hỏi: {e}")
-        return generate_sample_questions()
+def export_docx(mcq_text):
+    """Xuất ra file Word"""
+    doc = Document()
+    doc.add_heading("Bộ câu hỏi trắc nghiệm", level=1)
+    for line in mcq_text.split("\n"):
+        doc.add_paragraph(line)
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
 
-def generate_quiz_fallback(content, num_questions=10):
-    """Phương pháp dự phòng nếu GPT không trả về đúng format"""
-    try:
-        # Tạo ít câu hỏi hơn để đảm bảo chất lượng
-        prompt = f"""
-Tạo {min(num_questions, 10)} câu hỏi trắc nghiệm Lịch sử từ nội dung này.
-Trả về JSON: {{"questions": [{{"question": "...", "options": ["A...","B...","C...","D..."], "correct_answer": "A"}}]}}
 
-Nội dung: {content[:3000]}
-"""
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
-        )
-        
-        text = response.choices[0].message.content
-        # Xử lý response để tìm JSON
-        start_idx = text.find('{')
-        end_idx = text.rfind('}') + 1
-        if start_idx != -1 and end_idx != 0:
-            json_str = text[start_idx:end_idx]
-            return json.loads(json_str)
-    except:
-        pass
-    
-    # Cuối cùng trả về mẫu
-    return generate_sample_questions()
+def export_pdf(mcq_text):
+    """Xuất ra file PDF"""
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    width, height = letter
+    y = height - 50
+    for line in mcq_text.split("\n"):
+        c.drawString(50, y, line)
+        y -= 15
+        if y < 50:
+            c.showPage()
+            y = height - 50
+    c.save()
+    buf.seek(0)
+    return buf
 
-def generate_sample_questions():
-    """Câu hỏi mẫu khi mọi thứ thất bại"""
-    return {
-        "questions": [
-            {
-                "question": "Vua nào dựng nước Văn Lang, nhà nước đầu tiên của Việt Nam?",
-                "options": [
-                    "A. Hùng Vương",
-                    "B. An Dương Vương", 
-                    "C. Lý Nam Đế",
-                    "D. Ngô Quyền"
-                ],
-                "correct_answer": "A"
-            },
-            {
-                "question": "Chiến thắng Bạch Đằng năm 938 do ai lãnh đạo?",
-                "options": [
-                    "A. Ngô Quyền",
-                    "B. Lê Hoàn",
-                    "C. Trần Hưng Đạo", 
-                    "D. Lý Thường Kiệt"
-                ],
-                "correct_answer": "A"
-            }
-        ]
-    }
 
-# ====== GỬI EMAIL ======
-def send_email(receiver_email, subject, body, attachment_data=None, filename="quiz.json"):
-    try:
-        # THAY ĐỔI THÔNG TIN EMAIL CỦA BẠN Ở ĐÂY
-        sender_email = "your-email@gmail.com"
-        sender_password = "your-app-password"
+def send_email(recipient, subject, body, attachment=None, filename="quiz.docx"):
+    """Gửi mail kèm file"""
+    msg = MIMEMultipart()
+    msg["From"] = SMTP_EMAIL
+    msg["To"] = recipient
+    msg["Subject"] = subject
 
-        message = MIMEMultipart()
-        message["From"] = sender_email
-        message["To"] = receiver_email
-        message["Subject"] = subject
-        message.attach(MIMEText(body, "plain"))
+    msg.attach(MIMEText(body, "plain"))
+    if attachment:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(attachment.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename={filename}")
+        msg.attach(part)
 
-        if attachment_data:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(attachment_data)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f"attachment; filename={filename}")
-            message.attach(part)
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_EMAIL, SMTP_PASSWORD)
+        server.send_message(msg)
 
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.send_message(message)
-        return True
-    except Exception as e:
-        st.error(f"Lỗi khi gửi email: {e}")
-        return False
 
-# ====== GIAO DIỆN ỨNG DỤNG ======
-st.set_page_config(page_title="Hệ thống Trắc nghiệm Lịch sử", layout="wide")
+# ======================
+# 🎯 GIAO DIỆN STREAMLIT
+# ======================
 
-st.title("🎯 Hệ thống Tạo & Tham gia Thi Trắc nghiệm Lịch sử")
-st.markdown("---")
+st.title("📘 ỨNG DỤNG TẠO CÂU HỎI TRẮC NGHIỆM TỰ ĐỘNG")
+mode = st.radio("Chọn chế độ:", ["Tạo và xuất file câu hỏi", "Làm bài trực tuyến"])
 
-tab1, tab2 = st.tabs(["📝 Tạo Câu Hỏi Trắc nghiệm", "🎮 Tham Gia Thi"])
+if mode == "Tạo và xuất file câu hỏi":
+    uploaded_file = st.file_uploader("📤 Tải lên file PDF hoặc DOCX", type=["pdf", "docx"])
+    link_input = st.text_input("Hoặc dán link tài liệu (nếu có):")
+    email_input = st.text_input("📧 Nhập email để gửi file (tùy chọn):")
 
-# ====== TAB 1: TẠO CÂU HỎI ======
-with tab1:
-    st.header("Tạo Câu Hỏi Trắc nghiệm từ Bài Giảng")
-    
-    # Thêm hướng dẫn
-    st.info("""
-    **Hướng dẫn sử dụng:**
-    1. Tải lên file PDF/DOCX hoặc nhập URL bài giảng Lịch sử
-    2. Kiểm tra nội dung trích xuất
-    3. Nhấn nút 'Tạo Câu Hỏi' 
-    4. Câu hỏi sẽ được tạo dựa trên nội dung bài giảng
-    """)
-    
-    source_type = st.radio("Chọn nguồn tài liệu:",
-                          ["📄 Tải lên file PDF", "📝 Tải lên file Word", "🌐 Nhập URL bài giảng"])
-    
-    content = ""
-    
-    if source_type == "📄 Tải lên file PDF":
-        pdf_file = st.file_uploader("Tải lên file PDF", type=["pdf"])
-        if pdf_file:
-            with st.spinner("Đang trích xuất nội dung từ PDF..."):
-                content = extract_text_from_pdf(pdf_file)
-    
-    elif source_type == "📝 Tải lên file Word":
-        docx_file = st.file_uploader("Tải lên file Word", type=["docx"])
-        if docx_file:
-            with st.spinner("Đang trích xuất nội dung từ Word..."):
-                content = extract_text_from_docx(docx_file)
-    
-    else:
-        url = st.text_input("Nhập URL bài giảng:")
-        if url:
-            with st.spinner("Đang lấy nội dung từ URL..."):
-                content = extract_text_from_url(url)
-    
-    if content:
-        st.subheader("Nội dung đã trích xuất:")
-        st.text_area("Nội dung", content[:1000] + "..." if len(content) > 1000 else content, 
-                    height=200, key="extracted_content")
-        
-        # Hiển thị thông tin về nội dung
-        st.info(f"Độ dài nội dung: {len(content)} ký tự")
-    
-    if st.button("🎯 Tạo Câu Hỏi Trắc nghiệm", type="primary"):
-        if not content:
-            st.warning("⚠️ Vui lòng cung cấp nội dung bài giảng trước!")
-        elif len(content.strip()) < 50:
-            st.warning("⚠️ Nội dung quá ngắn. Vui lòng cung cấp nội dung dài hơn.")
-        else:
-            with st.spinner("🤖 AI đang phân tích nội dung và tạo câu hỏi... (có thể mất 1-2 phút)"):
-                quiz_data = generate_quiz_questions(content, 20)
-            
-            if quiz_data and "questions" in quiz_data and len(quiz_data["questions"]) > 0:
-                st.session_state.quiz_data = quiz_data
-                st.success(f"✅ Đã tạo thành công {len(quiz_data['questions'])} câu hỏi trắc nghiệm!")
-                
-                st.subheader("📋 Câu hỏi đã tạo:")
-                for i, q in enumerate(quiz_data["questions"], 1):
-                    with st.expander(f"Câu {i}: {q['question']}"):
-                        for option in q["options"]:
-                            st.write(option)
-                        st.write(f"**Đáp án đúng: {q['correct_answer']}**")
-            else:
-                st.error("❌ Không thể tạo câu hỏi. Vui lòng thử lại với nội dung khác.")
-
-    # PHẦN XUẤT FILE & CHIA SẺ
-    if "quiz_data" in st.session_state:
-        st.markdown("---")
-        st.subheader("📤 Xuất file & Chia sẻ")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            json_data = json.dumps(st.session_state.quiz_data, ensure_ascii=False, indent=2)
-            st.download_button(
-                label="💾 Tải file JSON",
-                data=json_data,
-                file_name="cau_hoi_trac_nghiem.json",
-                mime="application/json"
-            )
-
-        with col2:
-            email = st.text_input("📧 Nhập email nhận file:", key="email_input")
-            if st.button("Gửi qua Email", key="send_email"):
-                if email:
-                    if send_email(email, "Câu hỏi trắc nghiệm Lịch sử",
-                                  "Đính kèm file câu hỏi trắc nghiệm đã tạo.",
-                                  json_data.encode()):
-                        st.success("✅ Đã gửi email thành công!")
-                else:
-                    st.warning("Vui lòng nhập email!")
-
-        with col3:
-            st.info("📱 Chia sẻ đến Zalo/Message:")
-            qr = qrcode.make(json_data)
-            buf = BytesIO()
-            qr.save(buf, format="PNG")
-            st.image(buf.getvalue(), caption="Quét QR code để chia sẻ", width=200)
-
-# ====== TAB 2: THAM GIA THI ======
-with tab2:
-    st.header("Tham Gia Thi Trắc nghiệm")
-
-    quiz_source = st.radio("Nguồn câu hỏi:",
-                          ["📁 Sử dụng câu hỏi đã tạo",
-                           "📤 Tải lên file câu hỏi JSON",
-                           "📄 Tải lên bài giảng PDF/DOCX",
-                           "🌐 Nhập URL bài giảng"])
-
-    quiz_data = None
-
-    if quiz_source == "📁 Sử dụng câu hỏi đã tạo":
-        if "quiz_data" in st.session_state:
-            quiz_data = st.session_state.quiz_data
-            st.success("✅ Đã tải câu hỏi từ bộ nhớ!")
-        else:
-            st.warning("⚠️ Chưa có câu hỏi nào được tạo. Vui lòng tạo câu hỏi ở tab bên trái.")
-
-    elif quiz_source == "📤 Tải lên file câu hỏi JSON":
-        uploaded_file = st.file_uploader("Tải lên file câu hỏi JSON", type=["json"])
+    if st.button("🚀 Tạo câu hỏi"):
         if uploaded_file:
-            try:
-                quiz_data = json.load(uploaded_file)
-                st.success("✅ Đã tải file câu hỏi thành công!")
-            except Exception as e:
-                st.error(f"❌ Lỗi khi đọc file: {e}")
+            text = extract_text(uploaded_file)
+        elif link_input:
+            text = link_input
+        else:
+            st.warning("Vui lòng tải lên file hoặc nhập link.")
+            st.stop()
 
-    elif quiz_source == "📄 Tải lên bài giảng PDF/DOCX":
-        file = st.file_uploader("Tải lên file bài giảng PDF hoặc DOCX", type=["pdf", "docx"])
-        if file:
-            with st.spinner("Đang trích xuất nội dung bài giảng và tạo câu hỏi..."):
-                if file.type == "application/pdf":
-                    content = extract_text_from_pdf(file)
-                elif file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                   "application/msword"]:
-                    content = extract_text_from_docx(file)
-                else:
-                    content = ""
-                if content:
-                    quiz_data = generate_quiz_questions(content, 20)
-                    st.success("✅ Đã tạo câu hỏi từ bài giảng!")
-                else:
-                    st.error("❌ Không thể trích xuất nội dung bài giảng.")
+        mcqs = generate_mcqs_from_openai(text)
+        st.text_area("📚 Kết quả câu hỏi:", mcqs, height=400)
 
-    else:  # Nhập URL
-        url = st.text_input("Nhập URL bài giảng:", key="url_input")
-        if url:
-            with st.spinner("Đang lấy nội dung và tạo câu hỏi..."):
-                content = extract_text_from_url(url)
-                if content:
-                    quiz_data = generate_quiz_questions(content, 20)
-                    st.success("✅ Đã tạo câu hỏi từ URL!")
-                else:
-                    st.error("❌ Không thể lấy nội dung từ URL.")
+        # Xuất file Word & PDF
+        docx_file = export_docx(mcqs)
+        pdf_file = export_pdf(mcqs)
+        st.download_button("📄 Tải file Word", docx_file, "quiz.docx")
+        st.download_button("📘 Tải file PDF", pdf_file, "quiz.pdf")
 
-    # Hiển thị bài thi nếu có dữ liệu
-    if quiz_data and "questions" in quiz_data:
-        st.markdown("---")
-        st.subheader("📝 Bài Thi Trắc nghiệm")
+        if email_input and SMTP_EMAIL:
+            send_email(email_input, "Bộ câu hỏi trắc nghiệm tự động", "Đính kèm là bộ câu hỏi bạn yêu cầu.", docx_file)
+            st.success(f"✅ Đã gửi file tới {email_input}")
 
-        # Khởi tạo session state
-        if "user_answers" not in st.session_state:
-            st.session_state.user_answers = [None] * len(quiz_data["questions"])
-        if "submitted" not in st.session_state:
-            st.session_state.submitted = False
-        if "current_quiz" not in st.session_state:
-            st.session_state.current_quiz = quiz_data
+elif mode == "Làm bài trực tuyến":
+    uploaded_file = st.file_uploader("📤 Tải lên file PDF hoặc DOCX", type=["pdf", "docx"])
+    if st.button("🚀 Tạo bài trắc nghiệm"):
+        if not uploaded_file:
+            st.warning("Vui lòng tải lên tài liệu.")
+            st.stop()
+        text = extract_text(uploaded_file)
+        mcqs = generate_mcqs_from_openai(text)
+        questions = [q for q in mcqs.split("\n\n") if "Câu" in q]
 
-        # Hiển thị các câu hỏi
-        for i, question in enumerate(quiz_data["questions"]):
-            st.markdown(f"### Câu {i+1}: {question['question']}")
-            options = question["options"]
-            
-            # Tạo key duy nhất cho mỗi câu hỏi
-            user_answer = st.radio(
-                f"Chọn đáp án cho câu {i+1}:",
-                options,
-                key=f"quiz_q_{i}",
-                index=st.session_state.user_answers[i] if st.session_state.user_answers[i] is not None else None
-            )
-            
-            if user_answer:
-                st.session_state.user_answers[i] = options.index(user_answer)
+        score = 0
+        for q in questions:
+            st.write(q.split("Đáp án đúng")[0])
+            answer = st.radio("Chọn đáp án:", ["A", "B", "C", "D"], key=q)
+            correct = q.split("Đáp án đúng:")[-1].strip()[-1]
+            if answer == correct:
+                score += 1
 
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("📤 Nộp Bài", type="primary", key="submit_quiz"):
-                st.session_state.submitted = True
-                st.rerun()
-
-        # Nút làm lại bài
-        with col2:
-            if st.button("🔄 Làm lại bài", key="reset_quiz"):
-                st.session_state.user_answers = [None] * len(quiz_data["questions"])
-                st.session_state.submitted = False
-                st.rerun()
-
-        # Hiển thị kết quả sau khi nộp bài
-        if st.session_state.submitted:
-            st.markdown("---")
-            st.subheader("📊 Kết Quả Bài Thi")
-
-            correct_count = 0
-            for i, question in enumerate(quiz_data["questions"]):
-                user_answer_index = st.session_state.user_answers[i]
-                correct_answer = question["correct_answer"]
-
-                if user_answer_index is not None:
-                    user_answer_letter = question["options"][user_answer_index][0]  # Lấy chữ cái A/B/C/D
-                    is_correct = (user_answer_letter == correct_answer)
-
-                    if is_correct:
-                        correct_count += 1
-
-                    # Hiển thị kết quả từng câu
-                    if is_correct:
-                        st.success(f"✅ Câu {i+1}: ĐÚNG - Đáp án của bạn: {user_answer_letter}")
-                    else:
-                        st.error(f"❌ Câu {i+1}: SAI - Đáp án của bạn: {user_answer_letter}, Đáp án đúng: {correct_answer}")
-                else:
-                    st.warning(f"⚠️ Câu {i+1}: Chưa trả lời - Đáp án đúng: {correct_answer}")
-
-            total_questions = len(quiz_data["questions"])
-            score_percent = (correct_count / total_questions) * 100 if total_questions > 0 else 0
-
-            st.metric("Số câu đúng", f"{correct_count}/{total_questions}")
-            st.metric("Tỷ lệ đúng", f"{score_percent:.1f}%")
-
-            # Đánh giá kết quả
-            if score_percent >= 90:
-                st.success("🎉 Xuất sắc! Bạn có kiến thức lịch sử rất tốt!")
-            elif score_percent >= 70:
-                st.info("👍 Khá tốt! Tiếp tục phát huy nhé!")
-            elif score_percent >= 50:
-                st.warning("💪 Cố gắng hơn nữa!")
-            else:
-                st.error("📚 Cần ôn tập lại kiến thức!")
-
-# ====== FOOTER ======
-st.markdown("---")
-st.markdown("Ứng dụng được phát triển bởi [Le Thi Ngoc Duyen] - Sử dụng AI để tạo câu hỏi trắc nghiệm")
-📋 Hướ
+        if st.button("📊 Nộp bài"):
+            st.success(f"🎯 Bạn đạt {score}/{len(questions)} điểm ({score/len(questions)*100:.1f}%).")
